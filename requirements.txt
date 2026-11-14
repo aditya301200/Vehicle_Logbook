@@ -1,0 +1,7 @@
+streamlit
+pandas
+plotly>=6.0.0
+narwhals>=1.25.0
+typing-extensions>=4.12.2
+openpyxl
+psycopg2-binary
