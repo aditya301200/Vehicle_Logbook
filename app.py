@@ -1,5 +1,6 @@
 import os
 import sys
+import hmac
 import typing
 import warnings
 import sqlite3
@@ -23,14 +24,119 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Mobile-friendly compact CSS
+# ---------------- PREDEFINED PASSWORD CONFIG ----------------
+# You can change this default password directly here, OR set APP_PASSWORD in Streamlit Secrets
+DEFAULT_APP_PASSWORD = "Apache@160"
+
+def get_expected_password():
+    """Fetches APP_PASSWORD from Streamlit secrets, environment variables, or falls back to DEFAULT_APP_PASSWORD."""
+    try:
+        if "APP_PASSWORD" in st.secrets:
+            return str(st.secrets["APP_PASSWORD"])
+    except Exception:
+        pass
+    return os.environ.get("APP_PASSWORD", DEFAULT_APP_PASSWORD)
+
+# ---------------- MOBILE-FIRST CSS STYLING ----------------
 st.markdown("""
     <style>
-    .block-container { padding-top: 1.2rem; padding-bottom: 2rem; }
-    div[data-testid="stMetricValue"] { font-size: 1.35rem; }
-    .stButton>button { width: 100%; border-radius: 8px; font-weight: 600; }
+    /* Compact main container padding */
+    .block-container {
+        padding-top: 1rem !important;
+        padding-bottom: 2.5rem !important;
+        padding-left: 0.8rem !important;
+        padding-right: 0.8rem !important;
+    }
+
+    /* Full-width touch-friendly buttons */
+    .stButton > button {
+        width: 100%;
+        min-height: 2.75rem;
+        border-radius: 10px;
+        font-weight: 600;
+    }
+
+    /* Swipeable horizontal tabs for mobile screens */
+    div[data-baseweb="tab-list"] {
+        overflow-x: auto !important;
+        white-space: nowrap !important;
+        flex-wrap: nowrap !important;
+        gap: 0.35rem;
+        padding-bottom: 4px;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: thin;
+    }
+    button[data-baseweb="tab"] {
+        padding: 0.5rem 0.85rem !important;
+        font-size: 0.92rem !important;
+    }
+
+    /* Styled Metric Cards */
+    div[data-testid="stMetric"] {
+        background-color: rgba(128, 128, 128, 0.08);
+        border: 1px solid rgba(128, 128, 128, 0.18);
+        padding: 0.65rem 0.75rem;
+        border-radius: 10px;
+    }
+    div[data-testid="stMetricValue"] {
+        font-size: 1.25rem !important;
+        font-weight: 700 !important;
+    }
+    div[data-testid="stMetricLabel"] {
+        font-size: 0.8rem !important;
+    }
+
+    /* Mobile Card styling for History items */
+    .mobile-log-card {
+        background-color: rgba(128, 128, 128, 0.07);
+        border-left: 4px solid #ff4b4b;
+        border-radius: 8px;
+        padding: 0.75rem 0.9rem;
+        margin-bottom: 0.65rem;
+        font-size: 0.9rem;
+    }
+    .mobile-log-card-maint {
+        background-color: rgba(128, 128, 128, 0.07);
+        border-left: 4px solid #00c0f2;
+        border-radius: 8px;
+        padding: 0.75rem 0.9rem;
+        margin-bottom: 0.65rem;
+        font-size: 0.9rem;
+    }
+
+    /* Responsive adjustments specifically for phones (< 768px) */
+    @media (max-width: 768px) {
+        h1 { font-size: 1.45rem !important; line-height: 1.25 !important; }
+        h2, h3 { font-size: 1.15rem !important; }
+        div[data-testid="stMetricValue"] { font-size: 1.1rem !important; }
+    }
     </style>
 """, unsafe_allow_html=True)
+
+# ---------------- PASSWORD LOGIN GATE ----------------
+def check_password_gate():
+    """Blocks access to the app until the user enters the correct predefined password."""
+    if st.session_state.get("authenticated", False):
+        return True
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    _, col_login, _ = st.columns([1, 1.4, 1])
+    with col_login:
+        st.markdown("### 🔐 Garage & Fuel Logbook")
+        st.caption("Protected Access — Enter the predefined password to view or log entries.")
+        with st.form("login_gate_form"):
+            entered_pwd = st.text_input("Password", type="password", placeholder="Enter app password...")
+            login_btn = st.form_submit_button("🔓 Unlock Logbook", type="primary", use_container_width=True)
+            if login_btn:
+                if hmac.compare_digest(entered_pwd, get_expected_password()):
+                    st.session_state["authenticated"] = True
+                    st.rerun()
+                else:
+                    st.error("❌ Incorrect password. Please try again.")
+    return False
+
+if not check_password_gate():
+    st.stop()
 
 LOCAL_DB_FILE = "vehicle_logbook.db"
 RECYCLE_BIN_RETENTION_DAYS = 3
@@ -161,7 +267,6 @@ def recalculate_vehicle_mileage_chain(vehicle_name, method="full_tank"):
     """
     Recalculates mileage_kmpl and fuel_cost_per_km for a vehicle:
     - 'full_tank' (Standard Full-Tank -> Red Blink -> Full-Tank):
-      Today's top-up litres is the exact fuel consumed since the last full tank.
       KMPL = Today's Distance / Today's Litres.
     - 'reserve_prev' (Red Blink -> Partial Fill -> Red Blink):
       KMPL = Today's Distance / Previous Fill-up's Litres.
@@ -604,29 +709,33 @@ def edit_maint_dialog(row_dict):
                 st.rerun(scope="fragment")
 
 # ---------------- HEADER ----------------
-col_title, col_status = st.columns([4, 1])
+col_title, col_status, col_lock = st.columns([3.8, 1.2, 0.7])
 with col_title:
-    st.title("🏍️ Vehicle Fuel, Mileage & Service Logbook")
-    st.caption("Full-Tank → Red Blink → Full-Tank Mileage Tracker, Monthly Running Costs, and HDFC IndianOil 5% Fuel Points (1 FP = ₹0.90).")
+    st.title("🏍️ Garage & Fuel Logbook")
+    st.caption("Full-Tank → Red Blink Mileage, Service Costs & HDFC 5% Fuel Points (1 FP = ₹0.90)")
 with col_status:
     if is_cloud_db():
-        st.success("☁️ Cloud PostgreSQL Active")
+        st.success("☁️ Cloud DB")
     else:
-        st.warning("💻 Local SQLite Mode")
+        st.warning("💻 Local DB")
+with col_lock:
+    if st.button("🔒 Lock", help="Lock the app and return to password screen"):
+        st.session_state["authenticated"] = False
+        st.rerun()
 
 # Quick Undo Banner if an item was just deleted in this session
 if st.session_state["last_deleted"]:
     last_del = st.session_state["last_deleted"]
-    u_col1, u_col2, u_col3 = st.columns([6, 2, 1])
+    u_col1, u_col2, u_col3 = st.columns([5, 2, 1])
     with u_col1:
         st.warning(f"🗑️ Moved **{last_del['label']}** to Recycle Bin (auto-clears in 3 days).")
     with u_col2:
-        if st.button("↩️ Undo Last Delete", type="primary", key="quick_undo_btn"):
+        if st.button("↩️ Undo Delete", type="primary", key="quick_undo_btn"):
             restore_record(last_del["table"], last_del["id"])
             st.toast(f"Restored {last_del['label']}!", icon="✅")
             st.rerun()
     with u_col3:
-        if st.button("✖️ Dismiss", key="dismiss_undo_btn"):
+        if st.button("✖️", key="dismiss_undo_btn"):
             st.session_state["last_deleted"] = None
             st.rerun()
 
@@ -639,11 +748,11 @@ bin_count = len(del_fuel_df) + len(del_maint_df)
 
 tabs = st.tabs([
     "⛽ Log Fuel",
-    "🔧 Log Maintenance",
-    "📊 Monthly Dashboard",
-    "💳 HDFC Fuel Points",
-    "🗂️ History, Search & Manage",
-    f"🗑️ Recycle Bin ({bin_count})"
+    "🔧 Maintenance",
+    "📊 Dashboard",
+    "💳 HDFC Points",
+    "🗂️ History & Edit",
+    f"🗑️ Bin ({bin_count})"
 ])
 
 # =====================================================================
@@ -683,8 +792,6 @@ def render_log_fuel_tab(fuel_df_cached):
     with col_v3:
         log_date = st.date_input("Date of Fill-up", value=date.today(), key=f"fuel_date_{fv}")
 
-    st.divider()
-
     # Fetch Previous Fill-up for reference
     prev_litres = None
     prev_cost = None
@@ -701,36 +808,35 @@ def render_log_fuel_tab(fuel_df_cached):
             if pd.notna(last_row["odo_after"]) and float(last_row["odo_after"]) > 0:
                 last_odo = float(last_row["odo_after"])
 
-    # Mileage Formula Selector (Defaults to Full-Tank -> Red Blink -> Full-Tank)
-    m_col1, m_col2 = st.columns([1, 1])
-    with m_col1:
-        if mode_key not in st.session_state:
-            st.session_state[mode_key] = (
-                "Trip B Reset (Direct KMs Driven)" if "Bike" in vehicle else "Odometer Before & After Fill-up (Scooty Mode)"
+    with st.expander("⚙️ Distance & Mileage Formula Settings", expanded=False):
+        m_col1, m_col2 = st.columns(2)
+        with m_col1:
+            if mode_key not in st.session_state:
+                st.session_state[mode_key] = (
+                    "Trip B Reset (Direct KMs Driven)" if "Bike" in vehicle else "Odometer Before & After Fill-up (Scooty Mode)"
+                )
+            entry_mode = st.radio(
+                "Distance Input Method",
+                ["Trip B Reset (Direct KMs Driven)", "Odometer Before & After Fill-up (Scooty Mode)"],
+                key=mode_key
             )
-        entry_mode = st.radio(
-            "Distance Input Method",
-            ["Trip B Reset (Direct KMs Driven)", "Odometer Before & After Fill-up (Scooty Mode)"],
-            horizontal=True,
-            key=mode_key
-        )
-    with m_col2:
-        calc_choice = st.radio(
-            "Mileage (KM/L) Formula",
-            [
-                "Full-Tank → Red Blink → Full-Tank (Uses Today's Top-Up Litres)",
-                "Partial Fill Reserve-to-Reserve (Uses Previous Fill-Up Litres)"
-            ],
-            index=0 if st.session_state["kmpl_calc_mode"] == "full_tank" else 1,
-            horizontal=False,
-            help="When you fill a Full Tank, reset Trip 0, run until Red Blink, and fill to the top again, the litres entering the tank TODAY is the exact amount of fuel burned during Trip B."
-        )
-        new_calc_mode = "full_tank" if "Full-Tank" in calc_choice else "reserve_prev"
-        if new_calc_mode != st.session_state["kmpl_calc_mode"]:
-            st.session_state["kmpl_calc_mode"] = new_calc_mode
-            for v in VEHICLES:
-                recalculate_vehicle_mileage_chain(v, method=new_calc_mode)
-            st.rerun()
+        with m_col2:
+            calc_choice = st.radio(
+                "Mileage (KM/L) Formula",
+                [
+                    "Full-Tank → Red Blink → Full-Tank (Uses Today's Top-Up Litres)",
+                    "Partial Fill Reserve-to-Reserve (Uses Previous Fill-Up Litres)"
+                ],
+                index=0 if st.session_state["kmpl_calc_mode"] == "full_tank" else 1
+            )
+            new_calc_mode = "full_tank" if "Full-Tank" in calc_choice else "reserve_prev"
+            if new_calc_mode != st.session_state["kmpl_calc_mode"]:
+                st.session_state["kmpl_calc_mode"] = new_calc_mode
+                for v in VEHICLES:
+                    recalculate_vehicle_mileage_chain(v, method=new_calc_mode)
+                st.rerun()
+
+    entry_mode = st.session_state[mode_key]
 
     col_d1, col_d2, col_d3 = st.columns(3)
     odo_before, odo_after, distance_km = 0.0, 0.0, 0.0
@@ -742,16 +848,16 @@ def render_log_fuel_tab(fuel_df_cached):
             odo_after = st.number_input("Current Odometer KM (Optional)", min_value=0.0, value=0.0, step=1.0, format="%.1f", key=f"odo_opt_{fv}")
     else:
         with col_d1:
-            odo_before = st.number_input("KMs Before Fill-up (Previous Odo)", value=last_odo, min_value=0.0, step=0.1, format="%.1f", key=f"odo_bef_{fv}")
+            odo_before = st.number_input("KMs Before Fill-up (Prev Odo)", value=last_odo, min_value=0.0, step=0.1, format="%.1f", key=f"odo_bef_{fv}")
         with col_d2:
-            odo_after = st.number_input("KMs At Current Fill-up (Current Odo)", value=0.0, min_value=0.0, step=0.1, format="%.1f", key=f"odo_aft_{fv}")
+            odo_after = st.number_input("KMs At Current Fill-up (Curr Odo)", value=0.0, min_value=0.0, step=0.1, format="%.1f", key=f"odo_aft_{fv}")
         with col_d3:
             distance_km = max(0.0, round(odo_after - odo_before, 1))
-            st.metric("Calculated Distance Driven", f"{distance_km:.1f} KM")
+            st.metric("Distance Driven", f"{distance_km:.1f} KM")
 
     col_f1, col_f2, col_f3, col_f4 = st.columns(4)
     with col_f1:
-        litres = st.number_input("Petrol Filled Today to Full Tank (Litres)", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"lit_{fv}")
+        litres = st.number_input("Petrol Filled Today (Litres)", min_value=0.0, value=0.0, step=0.01, format="%.2f", key=f"lit_{fv}")
     with col_f2:
         total_cost = st.number_input("Total Cost Paid Today (₹)", min_value=0.0, value=0.0, step=1.0, format="%.2f", key=f"cost_{fv}")
     with col_f3:
@@ -759,18 +865,17 @@ def render_log_fuel_tab(fuel_df_cached):
     with col_f4:
         payment_method = st.selectbox("Payment Method", PAYMENT_METHODS, index=0, key=f"pay_{fv}")
 
-    notes = st.text_input("Notes (Optional - e.g., Full tank after red indicator blink, Trip B reset to 0)", value="", key=f"notes_{fv}")
+    notes = st.text_input("Notes (Optional - e.g., Full tank after red blink, Trip B reset to 0)", value="", key=f"notes_{fv}")
 
-    # Live Preview Calculation
     if distance_km > 0 and litres > 0 and total_cost > 0:
         if st.session_state["kmpl_calc_mode"] == "reserve_prev" and prev_litres is not None:
             used_litres_for_kmpl = prev_litres
             used_cost_for_cpk = prev_cost if prev_cost is not None else total_cost
-            basis_tag = f"Reserve-to-Reserve: based on prev fill of {prev_litres:.2f} L on {prev_date}"
+            basis_tag = f"Prev Fill: {prev_litres:.2f} L on {prev_date}"
         else:
             used_litres_for_kmpl = litres
             used_cost_for_cpk = total_cost
-            basis_tag = f"Full-Tank Top-Up: {distance_km:.1f} KM ÷ {litres:.2f} L refilled today"
+            basis_tag = f"Full-Tank: {distance_km:.1f} KM ÷ {litres:.2f} L"
 
         live_mileage = round(distance_km / used_litres_for_kmpl, 2)
         live_ppl = round(total_cost / litres, 2)
@@ -779,10 +884,9 @@ def render_log_fuel_tab(fuel_df_cached):
         live_fp_rupees = round(live_points * FP_RUPEE_VALUE, 2)
 
         st.info(
-            f"**Live Calculation:** Mileage: **{live_mileage} km/L** *({basis_tag})* | "
-            f"Fuel Rate: **₹{live_ppl}/L** | "
-            f"Fuel Cost/KM: **₹{live_cpk}/km** | "
-            f"HDFC 5% Fuel Points: **{live_points} FP (≈ ₹{live_fp_rupees})**"
+            f"⚡ **Live Preview:** **{live_mileage} km/L** *({basis_tag})* | "
+            f"Rate: **₹{live_ppl}/L** | Cost/KM: **₹{live_cpk}/km** | "
+            f"Points: **{live_points} FP (≈ ₹{live_fp_rupees})**"
         )
 
     if st.button("💾 Save Fuel Entry", type="primary", key=f"save_fuel_btn_{fv}"):
@@ -814,10 +918,9 @@ def render_log_fuel_tab(fuel_df_cached):
             ))
             recalculate_vehicle_mileage_chain(vehicle, method=st.session_state["kmpl_calc_mode"])
 
-            # Reset all inputs to clean defaults for the next entry
             st.session_state["fuel_form_version"] += 1
             st.toast(
-                f"Saved! {vehicle} achieved {mileage_kmpl} km/L ({distance_km} KM on {used_litres_for_kmpl} L). Form reset!",
+                f"Saved! {vehicle} achieved {mileage_kmpl} km/L. Form reset!",
                 icon="✅"
             )
             st.rerun()
@@ -826,7 +929,7 @@ with tabs[0]:
     render_log_fuel_tab(active_fuel_df)
 
 # =====================================================================
-# TAB 2: LOG MAINTENANCE (Auto-sync Rider with Vehicle + Form Reset)
+# TAB 2: LOG MAINTENANCE
 # =====================================================================
 @st.fragment
 def render_log_maint_tab():
@@ -868,7 +971,7 @@ def render_log_maint_tab():
     with col_m7:
         m_payment = st.selectbox("Payment Mode", PAYMENT_METHODS, index=2, key=f"maint_pay_{mv}")
     with col_m8:
-        m_notes = st.text_input("Service Details (e.g., Engine oil change, brake pad replacement, chain lube)", value="", key=f"maint_notes_{mv}")
+        m_notes = st.text_input("Service Details (e.g., Engine oil change, brake pad, chain lube)", value="", key=f"maint_notes_{mv}")
 
     if st.button("🛠️ Save Maintenance Entry", type="primary", key=f"save_maint_btn_{mv}"):
         if m_cost <= 0:
@@ -880,18 +983,18 @@ def render_log_maint_tab():
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
             """, (str(m_date), m_vehicle, m_rider, m_category, m_odo, m_cost, m_payment, m_notes))
             st.session_state["maint_form_version"] += 1
-            st.toast(f"Logged ₹{m_cost:.2f} under '{m_category}' for {m_vehicle}!", icon="🛠️")
+            st.toast(f"Logged ₹{m_cost:.2f} under '{m_category}'!", icon="🛠️")
             st.rerun()
 
 with tabs[1]:
     render_log_maint_tab()
 
 # =====================================================================
-# TAB 3: MONTHLY DASHBOARD & FILTERS (Isolated Fragment)
+# TAB 3: MONTHLY DASHBOARD & MOBILE-FRIENDLY CHARTS
 # =====================================================================
 @st.fragment
 def render_dashboard_tab(fuel_df, maint_df):
-    st.subheader("📊 Monthly Distance, Fuel, Maintenance & True Running Cost")
+    st.subheader("📊 Monthly Analytics & True Running Cost")
 
     if fuel_df.empty and maint_df.empty:
         st.info("No active records logged yet. Add your first fuel fill-up or service record to unlock analytics!")
@@ -909,14 +1012,16 @@ def render_dashboard_tab(fuel_df, maint_df):
         all_months.update(m_df["month"].dropna().unique())
     sorted_months = sorted(list(all_months), reverse=True)
 
-    with st.expander("🔍 Filter Monthly Dashboard (Vehicle, Rider, Month, Payment, Keyword)", expanded=True):
-        df_c1, df_c2, df_c3, df_c4, df_c5 = st.columns(5)
+    with st.expander("🔍 Filter Dashboard (Vehicle, Rider, Month, Payment, Keyword)", expanded=False):
+        df_c1, df_c2, df_c3 = st.columns(3)
         with df_c1:
             selected_veh = st.selectbox("Vehicle", ["All Vehicles"] + VEHICLES, key="dash_veh")
         with df_c2:
             selected_rider = st.selectbox("Rider", ["All Riders"] + RIDERS, key="dash_rider")
         with df_c3:
             selected_months = st.multiselect("Months (Empty = All)", options=sorted_months, default=[], key="dash_months")
+
+        df_c4, df_c5 = st.columns(2)
         with df_c4:
             selected_pay = st.selectbox("Payment Mode", ["All Payment Modes"] + PAYMENT_METHODS, key="dash_pay")
         with df_c5:
@@ -1005,15 +1110,88 @@ def render_dashboard_tab(fuel_df, maint_df):
         overall_mileage = round(tot_km / tot_litres, 2) if tot_litres > 0 else 0.0
         overall_cpk = round(tot_running / tot_km, 2) if tot_km > 0 else 0.0
 
-        k1, k2, k3, k4, k5, k6 = st.columns(6)
-        k1.metric("Total Distance", f"{tot_km:,.1f} KM")
-        k2.metric("Total Petrol", f"{tot_litres:,.2f} L")
-        k3.metric("True Overall Mileage", f"{overall_mileage} km/L")
-        k4.metric("Total Fuel Cost", f"₹{tot_fuel_cost:,.0f}")
-        k5.metric("Total Maintenance", f"₹{tot_maint_cost:,.0f}")
-        k6.metric("True Running Cost/KM", f"₹{overall_cpk}/km")
+        # 3x2 Responsive Metric Grid (Easy to read on Mobile & Desktop)
+        r1_c1, r1_c2, r1_c3 = st.columns(3)
+        r1_c1.metric("Total Distance", f"{tot_km:,.1f} KM")
+        r1_c2.metric("Total Petrol", f"{tot_litres:,.2f} L")
+        r1_c3.metric("True Mileage", f"{overall_mileage} km/L")
+
+        r2_c1, r2_c2, r2_c3 = st.columns(3)
+        r2_c1.metric("Fuel Spend", f"₹{tot_fuel_cost:,.0f}")
+        r2_c2.metric("Service Spend", f"₹{tot_maint_cost:,.0f}")
+        r2_c3.metric("True Cost/KM", f"₹{overall_cpk}/km")
 
         st.divider()
+
+        # Mobile-Optimized Touch Charts (Fixed Axes so thumb-scrolling never gets trapped)
+        plotly_mobile_config = {
+            "displayModeBar": False,
+            "responsive": True,
+            "scrollZoom": False
+        }
+
+        c_chart1, c_chart2 = st.columns(2)
+        with c_chart1:
+            plot_sum = summary_df.sort_values("month")
+            fig_cost = go.Figure()
+            fig_cost.add_trace(go.Bar(
+                x=plot_sum["month"].tolist(),
+                y=plot_sum["fuel_cost"].tolist(),
+                name="Fuel (₹)",
+                marker_color="#ff4b4b",
+                text=[f"₹{v:,.0f}" if v > 0 else "" for v in plot_sum["fuel_cost"]],
+                textposition="inside"
+            ))
+            fig_cost.add_trace(go.Bar(
+                x=plot_sum["month"].tolist(),
+                y=plot_sum["maint_cost"].tolist(),
+                name="Service (₹)",
+                marker_color="#00c0f2",
+                text=[f"₹{v:,.0f}" if v > 0 else "" for v in plot_sum["maint_cost"]],
+                textposition="inside"
+            ))
+            fig_cost.update_layout(
+                barmode="stack",
+                title=dict(text="Monthly Fuel vs. Service Cost (₹)", font=dict(size=15)),
+                height=340,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                xaxis=dict(title=None, fixedrange=True, tickangle=-30),
+                yaxis=dict(title="₹", fixedrange=True),
+                hovermode="x unified",
+                margin=dict(l=10, r=10, t=65, b=35)
+            )
+            st.plotly_chart(fig_cost, use_container_width=True, config=plotly_mobile_config)
+
+        with c_chart2:
+            if not f_df.empty:
+                f_df_plot = f_df.copy()
+                f_df_plot["mileage_kmpl"] = pd.to_numeric(f_df_plot["mileage_kmpl"], errors="coerce").fillna(0.0).astype(float)
+                f_df_plot = f_df_plot.sort_values(["log_date", "id"])
+
+                fig_mil = go.Figure()
+                for veh_name, grp in f_df_plot.groupby("vehicle"):
+                    short_name = "Apache Bike" if "Bike" in str(veh_name) else "Scooty"
+                    fig_mil.add_trace(go.Scatter(
+                        x=grp["log_date"].tolist(),
+                        y=grp["mileage_kmpl"].tolist(),
+                        mode="lines+markers+text",
+                        name=short_name,
+                        text=[f"{v:.1f}" for v in grp["mileage_kmpl"]],
+                        textposition="top center",
+                        textfont=dict(size=10),
+                        line=dict(width=3),
+                        marker=dict(size=8)
+                    ))
+                fig_mil.update_layout(
+                    title=dict(text="Mileage Trend per Fill-up (km/L)", font=dict(size=15)),
+                    height=340,
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                    xaxis=dict(title=None, fixedrange=True, tickangle=-30),
+                    yaxis=dict(title="km/L", fixedrange=True),
+                    hovermode="x unified",
+                    margin=dict(l=10, r=10, t=65, b=35)
+                )
+                st.plotly_chart(fig_mil, use_container_width=True, config=plotly_mobile_config)
 
         st.markdown("#### 📅 Month-by-Month Breakdown")
         display_summary = summary_df.rename(columns={
@@ -1026,13 +1204,13 @@ def render_dashboard_tab(fuel_df, maint_df):
             "total_running_cost": "Total Running Cost (₹)",
             "fuel_only_cost_per_km": "Fuel Cost/KM (₹)",
             "true_cost_per_km": "True Running Cost/KM (₹)",
-            "fuel_points": "5% Fuel Points Earned"
+            "fuel_points": "5% Fuel Points"
         })
         st.dataframe(
             display_summary[[
                 "Month", "Distance (KM)", "Petrol (L)", "Avg Mileage (km/L)",
                 "Fuel Cost (₹)", "Maintenance (₹)", "Total Running Cost (₹)",
-                "Fuel Cost/KM (₹)", "True Running Cost/KM (₹)", "5% Fuel Points Earned"
+                "Fuel Cost/KM (₹)", "True Running Cost/KM (₹)", "5% Fuel Points"
             ]].style.format({
                 "Distance (KM)": "{:.1f}",
                 "Petrol (L)": "{:.2f}",
@@ -1042,68 +1220,21 @@ def render_dashboard_tab(fuel_df, maint_df):
                 "Total Running Cost (₹)": "₹{:,.2f}",
                 "Fuel Cost/KM (₹)": "₹{:.2f}",
                 "True Running Cost/KM (₹)": "₹{:.2f}",
-                "5% Fuel Points Earned": "{:.2f} FP"
+                "5% Fuel Points": "{:.2f} FP"
             }),
             use_container_width=True,
             hide_index=True
         )
 
-        c_chart1, c_chart2 = st.columns(2)
-        with c_chart1:
-            plot_sum = summary_df.sort_values("month")
-            fig_cost = go.Figure()
-            fig_cost.add_trace(go.Bar(
-                x=plot_sum["month"].tolist(),
-                y=plot_sum["fuel_cost"].tolist(),
-                name="Fuel Cost (₹)"
-            ))
-            fig_cost.add_trace(go.Bar(
-                x=plot_sum["month"].tolist(),
-                y=plot_sum["maint_cost"].tolist(),
-                name="Maintenance Cost (₹)"
-            ))
-            fig_cost.update_layout(
-                barmode="stack",
-                title="Monthly Fuel vs. Maintenance Cost (₹)",
-                xaxis_title="Month",
-                yaxis_title="Amount (₹)",
-                legend_title="Expense Type",
-                margin=dict(l=20, r=20, t=50, b=20)
-            )
-            st.plotly_chart(fig_cost, use_container_width=True)
-
-        with c_chart2:
-            if not f_df.empty:
-                f_df_plot = f_df.copy()
-                f_df_plot["mileage_kmpl"] = pd.to_numeric(f_df_plot["mileage_kmpl"], errors="coerce").fillna(0.0).astype(float)
-                f_df_plot = f_df_plot.sort_values(["log_date", "id"])
-
-                fig_mil = go.Figure()
-                for veh_name, grp in f_df_plot.groupby("vehicle"):
-                    fig_mil.add_trace(go.Scatter(
-                        x=grp["log_date"].tolist(),
-                        y=grp["mileage_kmpl"].tolist(),
-                        mode="lines+markers",
-                        name=str(veh_name)
-                    ))
-                fig_mil.update_layout(
-                    title="Mileage Trend per Fill-up (km/L)",
-                    xaxis_title="Fill-up Date",
-                    yaxis_title="Mileage (km/L)",
-                    legend_title="Vehicle",
-                    margin=dict(l=20, r=20, t=50, b=20)
-                )
-                st.plotly_chart(fig_mil, use_container_width=True)
-
 with tabs[2]:
     render_dashboard_tab(active_fuel_df, active_maint_df)
 
 # =====================================================================
-# TAB 4: HDFC INDIANOIL 5% FUEL POINTS TRACKER (Month Range Filter + 1 FP = ₹0.90)
+# TAB 4: HDFC INDIANOIL 5% FUEL POINTS TRACKER (Month Range + Chart)
 # =====================================================================
 @st.fragment
 def render_hdfc_tab(fuel_df):
-    st.subheader("💳 HDFC IndianOil Credit Card — 5% Fuel Points Tracker (1 FP = ₹0.90)")
+    st.subheader("💳 HDFC IndianOil — 5% Fuel Points (1 FP = ₹0.90)")
 
     if fuel_df.empty:
         st.info("No fuel transactions logged yet.")
@@ -1119,42 +1250,21 @@ def render_hdfc_tab(fuel_df):
     hdfc_df["fuel_points"] = pd.to_numeric(hdfc_df["fuel_points"], errors="coerce").fillna(0.0)
     hdfc_df["litres"] = pd.to_numeric(hdfc_df["litres"], errors="coerce").fillna(0.0)
 
-    # Sorted chronological list of available months for Start/End Range selection
     available_months_asc = sorted(hdfc_df["month"].dropna().unique().tolist())
     available_stations = sorted(hdfc_df["station"].dropna().unique().tolist())
 
-    with st.expander("🔍 Filter Fuel Points by Month Range, Station & Vehicle", expanded=True):
+    with st.expander("🔍 Filter by Month Range, Station & Vehicle", expanded=True):
         f_col1, f_col2, f_col3, f_col4 = st.columns(4)
         with f_col1:
-            start_month = st.selectbox(
-                "From Month (Start)",
-                options=available_months_asc,
-                index=0,
-                key="hdfc_start_month"
-            )
+            start_month = st.selectbox("From Month (Start)", options=available_months_asc, index=0, key="hdfc_start_month")
         with f_col2:
-            # Ensure End Month options are >= Start Month
             valid_end_months = [m for m in available_months_asc if m >= start_month]
-            end_month = st.selectbox(
-                "To Month (End)",
-                options=valid_end_months,
-                index=len(valid_end_months) - 1,
-                key="hdfc_end_month"
-            )
+            end_month = st.selectbox("To Month (End)", options=valid_end_months, index=len(valid_end_months) - 1, key="hdfc_end_month")
         with f_col3:
-            sel_h_station = st.selectbox(
-                "Filling Station",
-                ["All Stations"] + available_stations,
-                key="hdfc_st_filter"
-            )
+            sel_h_station = st.selectbox("Filling Station", ["All Stations"] + available_stations, key="hdfc_st_filter")
         with f_col4:
-            sel_h_veh = st.selectbox(
-                "Vehicle",
-                ["All Vehicles"] + VEHICLES,
-                key="hdfc_veh_filter"
-            )
+            sel_h_veh = st.selectbox("Vehicle", ["All Vehicles"] + VEHICLES, key="hdfc_veh_filter")
 
-    # Apply Month Range & Other Filters
     hdfc_df = hdfc_df[(hdfc_df["month"] >= start_month) & (hdfc_df["month"] <= end_month)]
     if sel_h_station != "All Stations":
         hdfc_df = hdfc_df[hdfc_df["station"] == sel_h_station]
@@ -1162,20 +1272,21 @@ def render_hdfc_tab(fuel_df):
         hdfc_df = hdfc_df[hdfc_df["vehicle"] == sel_h_veh]
 
     if hdfc_df.empty:
-        st.warning(f"No HDFC IndianOil transactions found between **{start_month}** and **{end_month}** for the selected filters.")
+        st.warning(f"No HDFC IndianOil transactions found between **{start_month}** and **{end_month}**.")
         return
 
     total_hdfc_spend = float(hdfc_df["total_cost"].sum())
     total_fp = float(hdfc_df["fuel_points"].sum())
     total_savings_inr = round(total_fp * FP_RUPEE_VALUE, 2)
 
-    p1, p2, p3, p4 = st.columns(4)
-    p1.metric("Selected Period", f"{start_month} → {end_month}")
-    p2.metric("Total HDFC Card Spend", f"₹{total_hdfc_spend:,.2f}")
-    p3.metric("Total 5% Fuel Points", f"{total_fp:,.2f} FP")
-    p4.metric("Effective Fuel Savings (1 FP = ₹0.90)", f"₹{total_savings_inr:,.2f}")
+    p1, p2 = st.columns(2)
+    p1.metric("Selected Range", f"{start_month} → {end_month}")
+    p2.metric("Total HDFC Spend", f"₹{total_hdfc_spend:,.2f}")
 
-    st.markdown("#### 📅 Monthly Fuel Points Statement Breakdown")
+    p3, p4 = st.columns(2)
+    p3.metric("Total 5% Points", f"{total_fp:,.2f} FP")
+    p4.metric("Savings (1 FP = ₹0.90)", f"₹{total_savings_inr:,.2f}")
+
     monthly_fp = hdfc_df.groupby(["month", "station"]).agg(
         tx_count=("id", "count"),
         total_litres=("litres", "sum"),
@@ -1184,6 +1295,29 @@ def render_hdfc_tab(fuel_df):
     ).reset_index().sort_values("month", ascending=False)
     monthly_fp["rupee_value"] = (monthly_fp["points_earned"] * FP_RUPEE_VALUE).round(2)
 
+    # Mobile-friendly Monthly Savings Bar Chart
+    fp_chart_df = monthly_fp.groupby("month", as_index=False).agg(
+        points_earned=("points_earned", "sum"),
+        rupee_value=("rupee_value", "sum")
+    ).sort_values("month")
+
+    fig_fp = go.Figure(go.Bar(
+        x=fp_chart_df["month"].tolist(),
+        y=fp_chart_df["rupee_value"].tolist(),
+        marker_color="#2ecc71",
+        text=[f"₹{v:.0f} ({p:.0f} FP)" for v, p in zip(fp_chart_df["rupee_value"], fp_chart_df["points_earned"])],
+        textposition="auto"
+    ))
+    fig_fp.update_layout(
+        title=dict(text="Monthly Cashback Value Earned (₹)", font=dict(size=15)),
+        height=290,
+        xaxis=dict(title=None, fixedrange=True),
+        yaxis=dict(title="₹ Value", fixedrange=True),
+        margin=dict(l=10, r=10, t=45, b=30)
+    )
+    st.plotly_chart(fig_fp, use_container_width=True, config={"displayModeBar": False, "responsive": True})
+
+    st.markdown("#### 📅 Monthly Fuel Points Statement Breakdown")
     st.dataframe(
         monthly_fp.rename(columns={
             "month": "Month",
@@ -1203,46 +1337,23 @@ def render_hdfc_tab(fuel_df):
         hide_index=True
     )
 
-    with st.expander(f"🧾 View Individual HDFC Card Transactions ({len(hdfc_df)} refills in range)", expanded=False):
-        tx_display = hdfc_df[["log_date", "vehicle", "rider", "station", "litres", "total_cost", "fuel_points", "notes"]].copy()
-        tx_display["rupee_val"] = (tx_display["fuel_points"] * FP_RUPEE_VALUE).round(2)
-        tx_display = tx_display.sort_values("log_date", ascending=False)
-        st.dataframe(
-            tx_display.rename(columns={
-                "log_date": "Date",
-                "vehicle": "Vehicle",
-                "rider": "Rider",
-                "station": "Station",
-                "litres": "Litres",
-                "total_cost": "Cost Paid (₹)",
-                "fuel_points": "Fuel Points (FP)",
-                "rupee_val": "Savings (₹)",
-                "notes": "Notes"
-            }),
-            use_container_width=True,
-            hide_index=True
-        )
-
 with tabs[3]:
     render_hdfc_tab(active_fuel_df)
 
 # =====================================================================
-# TAB 5: FULL HISTORY SEARCH, POP-UP MODIFY & SOFT DELETE
+# TAB 5: FULL HISTORY SEARCH, MOBILE CARDS & POP-UP MODIFY
 # =====================================================================
 @st.fragment
 def render_history_tab(fuel_df, maint_df):
-    st.subheader("🗂️ Full History Search, Modify & Soft Delete")
-    st.caption("Search anything across your entire history, or click Modify / Delete to open a pop-up modal.")
+    st.subheader("🗂️ History Search, Modify & Soft Delete")
 
-    with st.expander("🔎 Search & Filter Full History (Find Anything)", expanded=True):
-        h_c1, h_c2, h_c3, h_c4 = st.columns(4)
+    with st.expander("🔎 Search & Filter Full History", expanded=False):
+        h_c1, h_c2 = st.columns(2)
         with h_c1:
-            hist_search = st.text_input("Keyword Search (Notes, Station, Category, Amount, ID)", key="hist_search").strip()
-        with h_c2:
+            hist_search = st.text_input("Keyword Search (Notes, Station, Amount, ID)", key="hist_search").strip()
             hist_veh = st.selectbox("Filter Vehicle", ["All Vehicles"] + VEHICLES, key="hist_veh")
-        with h_c3:
+        with h_c2:
             hist_rider = st.selectbox("Filter Rider", ["All Riders"] + RIDERS, key="hist_rider")
-        with h_c4:
             hist_pay = st.selectbox("Filter Payment Method", ["All Payment Modes"] + PAYMENT_METHODS, key="hist_pay")
 
         h_d1, h_d2, h_d3 = st.columns(3)
@@ -1252,6 +1363,13 @@ def render_history_tab(fuel_df, maint_df):
             start_dt = st.date_input("Start Date", value=date.today() - timedelta(days=90), disabled=not use_date_filter, key="hist_start")
         with h_d3:
             end_dt = st.date_input("End Date", value=date.today(), disabled=not use_date_filter, key="hist_end")
+
+    view_mode = st.radio(
+        "Display Layout",
+        ["📱 Mobile Card View (Easy Reading on Phone)", "💻 Full Table View"],
+        index=0,
+        horizontal=True
+    )
 
     filt_fuel = fuel_df.copy()
     if not filt_fuel.empty:
@@ -1288,18 +1406,13 @@ def render_history_tab(fuel_df, maint_df):
             filt_maint = filt_maint[combined_m.str.contains(hist_search, case=False, na=False)]
 
     # ---- FUEL HISTORY SECTION ----
-    st.markdown(f"#### ⛽ Fuel Refill History ({len(filt_fuel)} matching records)")
+    st.markdown(f"#### ⛽ Fuel Refill History ({len(filt_fuel)} entries)")
     if not filt_fuel.empty:
-        display_fuel_cols = [c for c in filt_fuel.columns if c not in ("is_deleted", "deleted_at")]
-        st.dataframe(
-            filt_fuel[display_fuel_cols].sort_values(["log_date", "id"], ascending=[False, False]),
-            use_container_width=True,
-            hide_index=True
-        )
+        sorted_fuel = filt_fuel.sort_values(["log_date", "id"], ascending=[False, False])
 
         fuel_options = {
-            int(row["id"]): f"ID #{int(row['id'])} | {row['log_date']} | {row['vehicle']} | ₹{row['total_cost']} ({row['distance_km']} KM → {row['mileage_kmpl']} km/L)"
-            for _, row in filt_fuel.sort_values("id", ascending=False).iterrows()
+            int(row["id"]): f"ID #{int(row['id'])} | {row['log_date']} | ₹{row['total_cost']} ({row['distance_km']} KM → {row['mileage_kmpl']} km/L)"
+            for _, row in sorted_fuel.iterrows()
         }
 
         f_bar1, f_bar2, f_bar3 = st.columns([3, 1, 1])
@@ -1313,39 +1426,47 @@ def render_history_tab(fuel_df, maint_df):
         sel_f_row = filt_fuel[filt_fuel["id"] == selected_fuel_id].iloc[0].to_dict()
 
         with f_bar2:
-            st.write("")
-            st.write("")
-            if st.button("✏️ Modify Fuel Entry", type="primary", key="btn_open_mod_fuel"):
+            if st.button("✏️ Modify Fuel", type="primary", key="btn_open_mod_fuel"):
                 st.session_state.pop(f"confirm_fuel_payload_{selected_fuel_id}", None)
                 edit_fuel_dialog(sel_f_row)
         with f_bar3:
-            st.write("")
-            st.write("")
-            if st.button("🗑️ Delete Fuel Entry", key="btn_soft_del_fuel"):
+            if st.button("🗑️ Delete Fuel", key="btn_soft_del_fuel"):
                 confirm_action_dialog(
                     action_type="soft_delete",
                     title_text="Move Fuel Entry to Recycle Bin?",
                     details_md=f"**Entry:** {fuel_options[selected_fuel_id]}\n\n*Note: You can restore this from the Recycle Bin within 3 days.*",
                     payload={"table": "vehicle_fuel_logs", "id": selected_fuel_id, "label": fuel_options[selected_fuel_id]}
                 )
+
+        if "Mobile Card" in view_mode:
+            for _, r in sorted_fuel.head(15).iterrows():
+                fp_inr = round(float(r["fuel_points"] or 0.0) * FP_RUPEE_VALUE, 2)
+                notes_html = f"<br><small>📝 {r['notes']}</small>" if r["notes"] else ""
+                st.markdown(
+                    f"""<div class="mobile-log-card">
+                    <b>#{int(r['id'])} • {r['log_date']} • {r['vehicle']}</b> ({r['rider']})<br>
+                    🛣️ <b>{r['distance_km']} KM</b> on <b>{r['litres']} L</b> → 🟢 <b>{r['mileage_kmpl']} km/L</b><br>
+                    💰 <b>₹{r['total_cost']}</b> (₹{r['price_per_litre']}/L • ₹{r['fuel_cost_per_km']}/km) | 💳 {r['fuel_points']} FP (₹{fp_inr})<br>
+                    ⛽ <small>{r['station']} • {r['payment_method']}</small>{notes_html}
+                    </div>""",
+                    unsafe_allow_html=True
+                )
+        else:
+            display_fuel_cols = [c for c in sorted_fuel.columns if c not in ("is_deleted", "deleted_at")]
+            st.dataframe(sorted_fuel[display_fuel_cols], use_container_width=True, hide_index=True)
     else:
         st.caption("No matching fuel logs found.")
 
     st.divider()
 
     # ---- MAINTENANCE HISTORY SECTION ----
-    st.markdown(f"#### 🔧 Maintenance History ({len(filt_maint)} matching records)")
+    st.markdown(f"#### 🔧 Maintenance History ({len(filt_maint)} entries)")
     if not filt_maint.empty:
-        display_maint_cols = [c for c in filt_maint.columns if c not in ("is_deleted", "deleted_at")]
-        st.dataframe(
-            filt_maint[display_maint_cols].sort_values(["service_date", "id"], ascending=[False, False]),
-            use_container_width=True,
-            hide_index=True
-        )
+        sorted_maint = filt_maint.sort_values(["service_date", "id"], ascending=[False, False])
 
         maint_options = {
-            int(row["id"]): f"ID #{int(row['id'])} | {row['service_date']} | {row['vehicle']} | {row['category']} (₹{row['cost']})"
-            for _, row in filt_maint.sort_values("id", ascending=False).iterrows()
+            int(row["id"]): f"ID #{int(row['id'])} | {row['service_date']} | {row['category']} (₹{row['cost']})"
+            for _, row in sorted_maint.iterrows()
         }
 
         m_bar1, m_bar2, m_bar3 = st.columns([3, 1, 1])
@@ -1359,21 +1480,32 @@ def render_history_tab(fuel_df, maint_df):
         sel_m_row = filt_maint[filt_maint["id"] == selected_maint_id].iloc[0].to_dict()
 
         with m_bar2:
-            st.write("")
-            st.write("")
-            if st.button("✏️ Modify Maintenance", type="primary", key="btn_open_mod_maint"):
+            if st.button("✏️ Modify Service", type="primary", key="btn_open_mod_maint"):
                 st.session_state.pop(f"confirm_maint_payload_{selected_maint_id}", None)
                 edit_maint_dialog(sel_m_row)
         with m_bar3:
-            st.write("")
-            st.write("")
-            if st.button("🗑️ Delete Maintenance", key="btn_soft_del_maint"):
+            if st.button("🗑️ Delete Service", key="btn_soft_del_maint"):
                 confirm_action_dialog(
                     action_type="soft_delete",
                     title_text="Move Maintenance Entry to Recycle Bin?",
                     details_md=f"**Entry:** {maint_options[selected_maint_id]}\n\n*Note: You can restore this from the Recycle Bin within 3 days.*",
                     payload={"table": "vehicle_maintenance_logs", "id": selected_maint_id, "label": maint_options[selected_maint_id]}
                 )
+
+        if "Mobile Card" in view_mode:
+            for _, r in sorted_maint.head(15).iterrows():
+                notes_html = f"<br><small>📝 {r['notes']}</small>" if r["notes"] else ""
+                st.markdown(
+                    f"""<div class="mobile-log-card-maint">
+                    <b>#{int(r['id'])} • {r['service_date']} • {r['category']}</b><br>
+                    🏍️ {r['vehicle']} ({r['rider']}) | 🛣️ Odo: {r['odometer']} KM<br>
+                    🛠️ <b>Cost: ₹{r['cost']}</b> • <small>{r['payment_method']}</small>{notes_html}
+                    </div>""",
+                    unsafe_allow_html=True
+                )
+        else:
+            display_maint_cols = [c for c in sorted_maint.columns if c not in ("is_deleted", "deleted_at")]
+            st.dataframe(sorted_maint[display_maint_cols], use_container_width=True, hide_index=True)
     else:
         st.caption("No matching maintenance logs found.")
 
@@ -1381,7 +1513,7 @@ with tabs[4]:
     render_history_tab(active_fuel_df, active_maint_df)
 
 # =====================================================================
-# TAB 6: 3-DAY AUTO-CLEARING RECYCLE BIN (Isolated Fragment)
+# TAB 6: 3-DAY AUTO-CLEARING RECYCLE BIN
 # =====================================================================
 @st.fragment
 def render_recycle_bin_tab(del_fuel_df, del_maint_df):
@@ -1425,7 +1557,7 @@ def render_recycle_bin_tab(del_fuel_df, del_maint_df):
         rf_col1, rf_col2, rf_col3 = st.columns([2, 1, 1])
         with rf_col1:
             del_fuel_map = {
-                int(r["id"]): f"ID #{int(r['id'])} | {r['log_date']} | {r['vehicle']} | ₹{r['total_cost']} ({r['Auto-Purge In']})"
+                int(r["id"]): f"ID #{int(r['id'])} | {r['log_date']} | ₹{r['total_cost']} ({r['Auto-Purge In']})"
                 for _, r in df_bin_f.iterrows()
             }
             target_fuel_id = st.selectbox(
@@ -1435,16 +1567,12 @@ def render_recycle_bin_tab(del_fuel_df, del_maint_df):
                 key="bin_fuel_select"
             )
         with rf_col2:
-            st.write("")
-            st.write("")
-            if st.button("↩️ Undo / Restore Fuel", key="restore_fuel_btn"):
+            if st.button("↩️ Restore Fuel", key="restore_fuel_btn"):
                 restore_record("vehicle_fuel_logs", target_fuel_id)
                 st.toast(f"Restored Fuel Entry #{target_fuel_id}!", icon="✅")
                 st.rerun()
         with rf_col3:
-            st.write("")
-            st.write("")
-            if st.button("❌ Delete Permanently", key="perm_del_fuel_btn"):
+            if st.button("❌ Delete Forever", key="perm_del_fuel_btn"):
                 confirm_action_dialog(
                     action_type="perm_delete",
                     title_text=f"Permanently Delete Fuel Entry #{target_fuel_id}?",
@@ -1469,7 +1597,7 @@ def render_recycle_bin_tab(del_fuel_df, del_maint_df):
         rm_col1, rm_col2, rm_col3 = st.columns([2, 1, 1])
         with rm_col1:
             del_maint_map = {
-                int(r["id"]): f"ID #{int(r['id'])} | {r['service_date']} | {r['vehicle']} | {r['category']} | ₹{r['cost']} ({r['Auto-Purge In']})"
+                int(r["id"]): f"ID #{int(r['id'])} | {r['service_date']} | {r['category']} | ₹{r['cost']} ({r['Auto-Purge In']})"
                 for _, r in df_bin_m.iterrows()
             }
             target_maint_id = st.selectbox(
@@ -1479,16 +1607,12 @@ def render_recycle_bin_tab(del_fuel_df, del_maint_df):
                 key="bin_maint_select"
             )
         with rm_col2:
-            st.write("")
-            st.write("")
-            if st.button("↩️ Undo / Restore Maintenance", key="restore_maint_btn"):
+            if st.button("↩️ Restore Service", key="restore_maint_btn"):
                 restore_record("vehicle_maintenance_logs", target_maint_id)
                 st.toast(f"Restored Maintenance Entry #{target_maint_id}!", icon="✅")
                 st.rerun()
         with rm_col3:
-            st.write("")
-            st.write("")
-            if st.button("❌ Delete Permanently", key="perm_del_maint_btn"):
+            if st.button("❌ Delete Forever", key="perm_del_maint_btn"):
                 confirm_action_dialog(
                     action_type="perm_delete",
                     title_text=f"Permanently Delete Maintenance Entry #{target_maint_id}?",
